@@ -17,7 +17,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 1. **绝不引入 HTTP/网络客户端。** 所有数据走 `arkcli`——这是写明的安全特性。
 2. **arkcli 默认输出 JSON**——不要加 `--format json`。子进程参数固定,绝不拼用户输入。`run_arkcli_login`/`run_arkcli_install` 同样是硬编码 osascript 串。
-3. **`-1` 是"无数据"哨兵** → 转 `None`。**Coding Plan 只有 `percent`**(无 used/total)。**`reset_at` 已是毫秒。**
+3. **`-1` 是"无数据"哨兵** → 转 `None`。**Coding Plan 只有 `percent`**(无 used/total)、**也无 tier**(`GetCodingPlanUsage` API 不返回 `PlanType`,非 arkcli 丢弃)。**`reset_at` 已是毫秒。**
 4. **托盘标题在 Rust 侧计算**(`tray::compute_title`),前端不推送。
 5. **托盘图标经 `include_image!` 编译期嵌入**——改完 `src-tauri/icons/tray-icon.png` 要 `touch src-tauri/src/tray.rs` 让 `tauri dev` 重建。
 6. **`PlanUsage` 永不返回 Tauri `Err`**——失败落到三字段:`not_installed`(arkcli 不在 PATH)/ `auth_expired`(SSO 失效)/ `error`(其它),前端渲染对应引导条。`run_arkcli_install` 打开 Terminal 跑硬编码安装+登录命令。

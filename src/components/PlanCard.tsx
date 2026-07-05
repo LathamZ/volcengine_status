@@ -15,7 +15,7 @@ export function PlanCard({ plan, warn, critical, now }: Props) {
       <div className="card-head">
         <span className="card-title">{planTitle(plan.product)}</span>
         {plan.tier && <span className="badge">{plan.tier}</span>}
-        {plan.edition && plan.edition !== "personal" && (
+        {plan.edition && (
           <span className="badge badge-muted">{plan.edition}</span>
         )}
       </div>

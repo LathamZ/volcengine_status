@@ -71,6 +71,8 @@ docs/技术方案.md            设计 + 选型对比
 
 - Agent 周期:`5h` / `weekly` / `monthly`(有 `used`+`total`)。
 - Coding 周期:`session` / `weekly` / `monthly`(仅 `percent`)。
+- **tier 是 Agent Plan 专属**:来自 `GetAFPUsage` 响应的 `PlanType` 字段(medium/large/max)。Coding Plan 走 `GetCodingPlanUsage`,响应里**没有** `PlanType`(只有 `QuotaUsage`/`Status`/`UpdateTimestamp`),故 arkcli 不返回 tier——是 API 侧设计,非 arkcli 丢弃。Coding 的"等级"只有 `edition`(personal/team,UI 已显示)。
+- 顺便:`GetCodingPlanUsage` 的 `ResetTimestamp` 是**秒**,`GetAFPUsage` 的 `ResetTime` 是**毫秒**;arkcli 把 Coding 的秒 ×1000 归一,所以 `reset_at` 统一按毫秒处理。
 - 认证失效检测是**启发式**(非零退出 / stderr 关键词 `expired|unauthorized|401|login`)。若能抓到真实过期 payload,精修 `UsageError::is_auth_expired`。
 - 未安装检测:`Command::new("arkcli")` → `io::ErrorKind::NotFound` → `not_installed=true`。
 - 可选进阶数据源(路线图,尚未接):`arkcli usage plan-details --start YYYY-MM-DD`、`arkcli usage stats --mine`。
