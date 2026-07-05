@@ -26,3 +26,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 ## 提交前
 
 `cargo fmt` + `cargo clippy -- -D warnings`,`npm audit` 保 0,不要 gitignore `Cargo.lock`,签名/updater 配置不要零散加。
+
+## 图片
+
+当前模型可能无法解析图片。涉及图片的任务只把链接/路径按格式整理好,**不读取、不"看"、不描述图片内容**;确实需要图中信息时让用户用文字描述。详见 AGENTS.md「图片处理」。
