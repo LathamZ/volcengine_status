@@ -7,6 +7,7 @@
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 /// Top-level payload shipped to the frontend. Always returned (never errors
 /// into a Tauri `Err`) so the UI can render an auth-expired or error banner
@@ -106,7 +107,7 @@ struct RawPeriod {
     #[serde(default)]
     percent: Option<f64>,
     #[serde(default)]
-    reset_at: Option<i64>,
+    reset_at: Option<String>,
 }
 
 /// Fetch and normalize. Never panics; failures land in `auth_expired`/`error`.
@@ -151,7 +152,10 @@ pub async fn fetch() -> PlanUsage {
 enum UsageError {
     Spawn(String),
     /// Non-zero exit code; stderr retained for auth-expired sniffing.
-    Failed { stderr: String, stdout: String },
+    Failed {
+        stderr: String,
+        stdout: String,
+    },
     Decode(String),
     NotFound,
 }
@@ -197,14 +201,33 @@ impl std::fmt::Display for UsageError {
 }
 
 async fn run_and_parse() -> Result<(Viewer, Vec<Plan>), UsageError> {
-    // Resolve arkcli via PATH; surface a clean "not found" if missing.
-    let output = match tokio::process::Command::new("arkcli")
-        .args(["usage", "plan"])
+    // Fast path: resolve arkcli via the process PATH. Works when the app is
+    // launched from a shell (e.g. `tauri dev`). GUI launches inherit a
+    // minimal launchd PATH that omits homebrew/nvm/volta dirs, so on
+    // NotFound we retry with the user's login-shell PATH.
+    match spawn_and_parse(None).await {
+        Err(UsageError::NotFound) => {
+            match spawn_and_parse(resolved_shell_path().as_deref()).await {
+                Err(UsageError::NotFound) => Err(UsageError::NotFound),
+                other => other,
+            }
+        }
+        other => other,
+    }
+}
+
+/// Spawn `arkcli usage plan` and parse the JSON. `path_env`, when set,
+/// overrides the child PATH so a GUI-launched process (whose PATH lacks
+/// homebrew/nvm) can still resolve arkcli to its real location.
+async fn spawn_and_parse(path_env: Option<&str>) -> Result<(Viewer, Vec<Plan>), UsageError> {
+    let mut cmd = tokio::process::Command::new("arkcli");
+    cmd.args(["usage", "plan"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .await
-    {
+        .stderr(std::process::Stdio::piped());
+    if let Some(p) = path_env {
+        cmd.env("PATH", p);
+    }
+    let output = match cmd.output().await {
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(UsageError::NotFound),
         Err(e) => return Err(UsageError::Spawn(e.to_string())),
@@ -217,8 +240,13 @@ async fn run_and_parse() -> Result<(Viewer, Vec<Plan>), UsageError> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let root: RawRoot = serde_json::from_str(&stdout)
-        .map_err(|e| UsageError::Decode(format!("{} (开头: {:?})", e, stdout.chars().take(120).collect::<String>())))?;
+    let root: RawRoot = serde_json::from_str(&stdout).map_err(|e| {
+        UsageError::Decode(format!(
+            "{} (开头: {:?})",
+            e,
+            stdout.chars().take(120).collect::<String>()
+        ))
+    })?;
 
     let viewer = Viewer {
         user_name: root.viewer.user_name,
@@ -235,10 +263,67 @@ async fn run_and_parse() -> Result<(Viewer, Vec<Plan>), UsageError> {
             product: item.product,
             edition: item.edition,
             tier: item.tier,
-            periods: item.periods.into_iter().map(|p| normalize_period(p, now)).collect(),
+            periods: item
+                .periods
+                .into_iter()
+                .map(|p| normalize_period(p, now))
+                .collect(),
         })
         .collect();
     Ok((viewer, plans))
+}
+
+/// Marker wrapping the captured PATH so `~/.zshrc` echo noise can't corrupt it
+/// (interactive shells may print to stdout during init). Alphanumeric only →
+/// safe inside shell single-quotes.
+const PATH_MARK: &str = "VPATHMARK7c3f";
+
+static SHELL_PATH: OnceLock<Option<String>> = OnceLock::new();
+
+/// The user's login+interactive shell PATH. GUI apps inherit a minimal launchd
+/// PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) that omits homebrew/nvm/volta dirs,
+/// so `arkcli` installed via `npm install -g` is invisible to the app. We ask
+/// the user's own shell — login *and* interactive — for its PATH: `-l`
+/// sources `~/.zprofile` (homebrew shellenv), `-i` sources `~/.zshrc` (where
+/// nvm/volta/asdf init lives). Cached for the process lifetime; fails closed
+/// to `None` (→ surfaces as `not_installed`). One-time blocking call on first
+/// NotFound; subsequent fetches hit the cache.
+fn resolved_shell_path() -> Option<String> {
+    SHELL_PATH
+        .get_or_init(|| {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+            let probe = format!("printf '{}%s{}' \"$PATH\"", PATH_MARK, PATH_MARK);
+            let out = std::process::Command::new(&shell)
+                .args(["-lic", &probe])
+                .output()
+                .ok()?;
+            let s = String::from_utf8_lossy(&out.stdout);
+            let p = extract_between_markers(&s, PATH_MARK, PATH_MARK)?;
+            if p.is_empty() {
+                None
+            } else {
+                Some(p.to_string())
+            }
+        })
+        .clone()
+}
+
+/// Slice `s` between the first `start` and the following `end`, tolerating
+/// noise before `start`. Returns `None` if either marker is absent.
+fn extract_between_markers<'a>(s: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let s_pos = s.find(start)?;
+    let after = &s[s_pos + start.len()..];
+    let e_pos = after.find(end)?;
+    Some(&after[..e_pos])
+}
+
+/// Parse arkcli's `reset_at` — an RFC 3339 / ISO 8601 string with a timezone
+/// offset (e.g. `"2026-07-06T00:00:00+08:00"`) — to epoch milliseconds. Returns
+/// `None` on parse failure (treated as "no reset info").
+fn parse_reset_at(s: &str) -> Option<i64> {
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
 }
 
 /// Map a raw arkcli period onto the normalized shape: `-1` sentinels become
@@ -246,12 +331,18 @@ async fn run_and_parse() -> Result<(Viewer, Vec<Plan>), UsageError> {
 fn normalize_period(raw: RawPeriod, now: DateTime<Utc>) -> Period {
     let used = raw.used.filter(|v| *v >= 0.0);
     let total = raw.total.filter(|v| *v >= 0.0);
-    let percent = raw.percent.filter(|v| *v >= 0.0).map(|p| p.clamp(0.0, 100.0));
+    let percent = raw
+        .percent
+        .filter(|v| *v >= 0.0)
+        .map(|p| p.clamp(0.0, 100.0));
     let remaining_percent = percent.map(|p| (100.0 - p).max(0.0));
-    let reset_at = raw.reset_at.filter(|v| *v > 0);
-    let reset_text = reset_at.and_then(|ms| {
-        DateTime::<Utc>::from_timestamp_millis(ms).map(|t| reset_text(t, now))
-    });
+    let reset_at = raw
+        .reset_at
+        .as_ref()
+        .and_then(|s| parse_reset_at(s))
+        .filter(|v| *v > 0);
+    let reset_text = reset_at
+        .and_then(|ms| DateTime::<Utc>::from_timestamp_millis(ms).map(|t| reset_text(t, now)));
     Period {
         label: raw.label,
         used,
@@ -302,7 +393,7 @@ mod tests {
                 used: Some(368.5),
                 total: Some(10000.0),
                 percent: Some(3.68),
-                reset_at: Some(now.timestamp_millis() + 3 * 3600 * 1000),
+                reset_at: Some((now + chrono::Duration::hours(3)).to_rfc3339()),
             },
             now,
         );
@@ -319,7 +410,7 @@ mod tests {
                 used: Some(-1.0),
                 total: Some(-1.0),
                 percent: Some(-1.0),
-                reset_at: Some(-1),
+                reset_at: Some("invalid".into()),
             },
             now,
         );
@@ -335,9 +426,9 @@ mod tests {
           "viewer": {"user_name":"LathamZhao","account_id":"2104139621","tenant":"volc","region":"cn-beijing"},
           "items": [
             {"product":"agent-plan","edition":"personal","tier":"medium","subscribed":true,
-             "periods":[{"label":"5h","used":368.5,"total":10000,"percent":3.68,"reset_at":1783198227000}]},
+             "periods":[{"label":"5h","used":368.5,"total":10000,"percent":3.68,"reset_at":"2026-07-05T21:12:05+08:00"}]},
             {"product":"coding-plan","edition":"personal","subscribed":true,
-             "periods":[{"label":"session","percent":2.91,"reset_at":1783202077000}]}
+             "periods":[{"label":"session","percent":2.91,"reset_at":"2026-07-05T20:28:35+08:00"}]}
           ]
         }"#;
         let root: RawRoot = serde_json::from_str(raw).unwrap();
@@ -353,7 +444,39 @@ mod tests {
             stdout: String::new(),
         };
         assert!(err.is_auth_expired());
-        let ok = UsageError::Failed { stderr: "network error".into(), stdout: String::new() };
+        let ok = UsageError::Failed {
+            stderr: "network error".into(),
+            stdout: String::new(),
+        };
         assert!(!ok.is_auth_expired());
+    }
+
+    #[test]
+    fn extracts_path_between_markers_amid_noise() {
+        // Interactive shells may echo to stdout during init (fortune, nvm
+        // notices, etc.); the marker pair isolates the captured PATH.
+        let raw = format!(
+            "fortune: hello\n{}{}\ntrailing\n",
+            "VPATHMARK7c3f/usr/bin:/bin:/opt/homebrew/binVPATHMARK7c3f", ""
+        );
+        let p = extract_between_markers(&raw, PATH_MARK, PATH_MARK).unwrap();
+        assert_eq!(p, "/usr/bin:/bin:/opt/homebrew/bin");
+        // Missing markers → None.
+        assert!(extract_between_markers("no markers here", PATH_MARK, PATH_MARK).is_none());
+        // Empty between markers → Some("").
+        let empty = format!("{}{}", PATH_MARK, PATH_MARK);
+        assert_eq!(
+            extract_between_markers(&empty, PATH_MARK, PATH_MARK),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn parses_iso_reset_at_to_millis() {
+        // 2026-07-06T00:00:00+08:00 == 2026-07-05T16:00:00 UTC
+        let ms = parse_reset_at("2026-07-06T00:00:00+08:00").unwrap();
+        let dt = DateTime::<Utc>::from_timestamp_millis(ms).unwrap();
+        assert_eq!(dt.to_rfc3339(), "2026-07-05T16:00:00+00:00");
+        assert!(parse_reset_at("not a date").is_none());
     }
 }

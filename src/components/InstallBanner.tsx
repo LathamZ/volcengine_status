@@ -11,7 +11,7 @@ export function InstallBanner({ onInstall, installing }: Props) {
         <div className="auth-detail">
           安装命令：<code>npm i -g @volcengine/ark-cli</code>
           <br />
-          安装后运行 <code>arkcli auth login volc-sso</code> 登录，再点刷新。
+          安装后运行 <code>arkcli auth login</code> 登录，再点刷新。
         </div>
       </div>
       <button className="primary-btn" onClick={onInstall} disabled={installing}>

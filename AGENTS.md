@@ -49,7 +49,7 @@ docs/技术方案.md            设计 + 选型对比
 
 4. **Coding Plan 只有 `percent`**(无 `used`/`total`),Agent Plan 两者都有。所有数值字段用 `Option<f64>` 统一建模。
 
-5. **`reset_at` 是 epoch 毫秒。** arkcli 已把 Coding 的秒 ×1000 归一,不要再 ×1000。
+5. **`reset_at` 是 ISO 8601 字符串**(如 `"2026-07-06T00:00:00+08:00"`,带时区偏移),不是 epoch 毫秒。`ark_usage::parse_reset_at` 用 `parse_from_rfc3339` 解析成 epoch 毫秒,失败落 `None`。coding-plan 的 item 还带 `updated_at`(epoch **秒**,整型,目前未用)。
 
 6. **托盘标题在 Rust 侧计算**(`tray::compute_title`),不是前端推送——这样浮层隐藏时标题也会更新。不要加前端 `update_tray_title` 调用路径。标题展示*剩余*%(100 − 已用),按 `Settings` 选定的套餐/周期。
 
@@ -61,18 +61,18 @@ docs/技术方案.md            设计 + 选型对比
 
 10. **设置持久化**到 `app_config_dir/settings.json`,经 `AppState`(纯 JSON 文件,**不是** `tauri-plugin-store`)。新偏好通过 `get_settings`/`set_settings` 包;`set_settings` 已处理 autostart 同步 + 托盘标题重算——扩展它,别绕过。
 
-11. **`arkcli` 经 PATH 解析**(与你 shell 同信任模型)。固定参数 → 无注入。不要加接收用户输入的 shell-out 路径。`run_arkcli_install` 打开 Terminal 跑硬编码的 `npm install -g @volcengine/ark-cli && arkcli auth login volc-sso`(系统 Node 可能需用户手动加 `sudo`)。
+11. **`arkcli` 经 PATH 解析**(与你 shell 同信任模型)。固定参数 → 无注入。不要加接收用户输入的 shell-out 路径。GUI 启动时进程 PATH 不含 homebrew/nvm 目录,首次 `NotFound` 时 `ark_usage::resolved_shell_path` 用用户登录交互式 shell(`$SHELL -lic`,source `.zprofile`+`.zshrc`)的 PATH 注入重试,`OnceLock` 缓存。`run_arkcli_install` 打开 Terminal 跑硬编码的 `npm install -g @volcengine/ark-cli && arkcli auth login`(系统 Node 可能需用户手动加 `sudo`)。
 
 12. **CSP 当前为 `null`**(已知加固项,在 README 路线图里)。开启严格 CSP 可以,但别破坏本地资源 webview——改完 `tauri.conf.json` 的 `security.csp` 要测浮层。
 
 ## 数据源与解析
 
-`arkcli usage plan` → `{ viewer, items:[{product, edition, tier?, periods:[{label, used?, total?, percent, reset_at}]}] }`。
+`arkcli usage plan` → `{ viewer, items:[{product, edition, tier?, updated_at?, periods:[{label, used?, total?, percent, reset_at(string ISO8601)}]}] }`。`updated_at` 仅 coding-plan 有(epoch 秒)。
 
 - Agent 周期:`5h` / `weekly` / `monthly`(有 `used`+`total`)。
 - Coding 周期:`session` / `weekly` / `monthly`(仅 `percent`)。
 - **tier 是 Agent Plan 专属**:来自 `GetAFPUsage` 响应的 `PlanType` 字段(medium/large/max)。Coding Plan 走 `GetCodingPlanUsage`,响应里**没有** `PlanType`(只有 `QuotaUsage`/`Status`/`UpdateTimestamp`),故 arkcli 不返回 tier——是 API 侧设计,非 arkcli 丢弃。Coding 的"等级"只有 `edition`(personal/team,UI 已显示)。
-- 顺便:`GetCodingPlanUsage` 的 `ResetTimestamp` 是**秒**,`GetAFPUsage` 的 `ResetTime` 是**毫秒**;arkcli 把 Coding 的秒 ×1000 归一,所以 `reset_at` 统一按毫秒处理。
+- `reset_at` 对所有周期都是 **ISO 8601 字符串**(带 `+08:00` 偏移,如 `"2026-07-06T00:00:00+08:00"`),arkcli 已归一掉后端秒/毫秒差异。`ark_usage::parse_reset_at` 用 `parse_from_rfc3339` 解析成 epoch 毫秒,失败落 `None`。
 - 认证失效检测是**启发式**(非零退出 / stderr 关键词 `expired|unauthorized|401|login`)。若能抓到真实过期 payload,精修 `UsageError::is_auth_expired`。
 - 未安装检测:`Command::new("arkcli")` → `io::ErrorKind::NotFound` → `not_installed=true`。
 - 可选进阶数据源(路线图,尚未接):`arkcli usage plan-details --start YYYY-MM-DD`、`arkcli usage stats --mine`。

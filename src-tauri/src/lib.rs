@@ -101,20 +101,20 @@ fn set_settings(
     Ok(())
 }
 
-/// Open a Terminal window running the SSO login. macOS-only; the browser-based
-/// SSO flow needs an interactive terminal.
+/// Open a Terminal window running the arkcli login. macOS-only; the
+/// browser-based login flow needs an interactive terminal.
 #[tauri::command]
 async fn run_arkcli_login() -> Result<(), String> {
-    let script = "tell application \"Terminal\" to do script \"arkcli auth login volc-sso\"";
+    let script = "tell application \"Terminal\" to do script \"arkcli auth login\"";
     open_terminal(script)
 }
 
-/// Open a Terminal that installs `@volcengine/ark-cli` globally and then runs the
-/// SSO login. Hardcoded command (no user input). nvm-managed node needs no sudo;
-/// system node may require the user to prefix `sudo` manually.
+/// Open a Terminal that installs `@volcengine/ark-cli` globally and then runs
+/// the login. Hardcoded command (no user input). nvm-managed node needs no
+/// sudo; system node may require the user to prefix `sudo` manually.
 #[tauri::command]
 async fn run_arkcli_install() -> Result<(), String> {
-    let script = "tell application \"Terminal\" to do script \"npm install -g @volcengine/ark-cli && arkcli auth login volc-sso\"";
+    let script = "tell application \"Terminal\" to do script \"npm install -g @volcengine/ark-cli && arkcli auth login\"";
     open_terminal(script)
 }
 
@@ -165,7 +165,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler({
-                    let sc = toggle_shortcut.clone();
+                    let sc = toggle_shortcut;
                     move |app, shortcut, event| {
                         if shortcut == &sc && event.state() == ShortcutState::Pressed {
                             spawn_toggle(app);
@@ -176,7 +176,7 @@ pub fn run() {
         )
         .manage(Arc::new(AppState::new()))
         .setup({
-            let toggle = toggle_shortcut.clone();
+            let toggle = toggle_shortcut;
             move |app| {
                 // Hide from Dock — this is a menu-bar accessory app.
                 #[cfg(target_os = "macos")]

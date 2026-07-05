@@ -215,7 +215,9 @@ pub fn hide_popover_cmd(app: AppHandle) {
 pub fn set_popover_height(height: f64, window: tauri::Window) -> Result<(), String> {
     let requested = height.clamp(POPOVER_MIN_H, POPOVER_MAX_H);
     let scale = window.scale_factor().unwrap_or(1.0);
-    let current = window.outer_size().map_err(|e| format!("outer_size: {}", e))?;
+    let current = window
+        .outer_size()
+        .map_err(|e| format!("outer_size: {}", e))?;
     let logical_w = (current.width as f64) / scale;
     let logical_h = (current.height as f64) / scale;
     if (logical_h - requested).abs() < 2.0 {

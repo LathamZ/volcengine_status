@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager};
 
 /// Which periods a tray title can reflect. `short` maps to 5h (agent) / session
 /// (coding) since the two products name their short window differently.
+#[allow(dead_code)]
 pub const PERIOD_SHORT: &str = "short";
 pub const PERIOD_WEEKLY: &str = "weekly";
 pub const PERIOD_MONTHLY: &str = "monthly";
@@ -55,6 +56,7 @@ pub struct AppState {
 #[derive(Clone)]
 pub struct CacheEntry {
     pub data: PlanUsage,
+    #[allow(dead_code)]
     pub fetched_at: DateTime<Utc>,
 }
 
@@ -122,6 +124,7 @@ impl AppState {
     pub fn set_refreshing(&self, v: bool) {
         self.refreshing.store(v, Ordering::SeqCst);
     }
+    #[allow(dead_code)]
     pub fn is_refreshing(&self) -> bool {
         self.refreshing.load(Ordering::SeqCst)
     }

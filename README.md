@@ -35,7 +35,7 @@
 - **阈值变色**(绿 / 琥珀 / 红),阈值可配。
 - **实时重置倒计时**(`3h 20m 后`),每 30 秒刷新。
 - **自动刷新**(默认 5 分钟,可配)+ 手动刷新(`⌘R`)。
-- **SSO 失效引导条**,一键"登录"打开 Terminal 跑 `arkcli auth login volc-sso`。
+- **SSO 失效引导条**,一键"登录"打开 Terminal 跑 `arkcli auth login`。
 - **arkcli 未安装引导条**,检测不到 `arkcli` 时提示安装命令,一键"在终端安装"。
 - **菜单栏配件**(Menu Bar Accessory)——隐藏 Dock 图标;跟随系统深色模式;可选开机自启。
 - 全局唤出快捷键:`Ctrl+⌘+V`。
@@ -73,7 +73,7 @@
 - **`arkcli`** —— 火山引擎方舟 CLI(npm 包 [`@volcengine/ark-cli`](https://www.npmjs.com/package/@volcengine/ark-cli)):
   ```bash
   npm install -g @volcengine/ark-cli   # 安装
-  arkcli auth login volc-sso          # SSO 登录(打开浏览器)
+  arkcli auth login                    # 登录(打开浏览器)
   arkcli usage plan                    # 验证——应输出 JSON
   ```
   如果 `arkcli` 不在 `PATH` 上,浮层会弹出**安装引导条**,显示上述命令并提供"在终端安装"按钮,一键打开 Terminal 执行。(nvm 管理的 Node 无需 `sudo`;系统 Node 可能需要手动加 `sudo`。)
@@ -123,7 +123,7 @@ npm run tauri:build     # 产出 src-tauri/target/release/bundle/{macos,*.dmg}
 
 **自身零网络调用。** `Cargo.toml` 不含任何 HTTP 客户端(`reqwest`/`hyper`/`ureq`…,已核实)。应用自身**不发起任何**对外网络请求,唯一网络流量来自 `arkcli` 自身,走你已信任的会话。无遥测、无分析、无自动更新回连。✅
 
-**无子进程注入。** `arkcli usage plan`、登录助手、安装助手(`osascript → Terminal → npm install -g @volcengine/ark-cli && arkcli auth login volc-sso`)都用**硬编码参数串**,无用户输入插值 → 无命令注入。⚠️ `arkcli` 经 `PATH` 解析(与你 shell 同信任模型),若 PATH 中靠前的位置有恶意同名二进制会被执行。想加固可在启动时解析 `arkcli` 的绝对路径(欢迎 PR)。
+**无子进程注入。** `arkcli usage plan`、登录助手、安装助手(`osascript → Terminal → npm install -g @volcengine/ark-cli && arkcli auth login`)都用**硬编码参数串**,无用户输入插值 → 无命令注入。⚠️ `arkcli` 经 `PATH` 解析(与你 shell 同信任模型):GUI 启动时进程 PATH 不含 homebrew/nvm 目录,首次 `NotFound` 时用用户登录交互式 shell 的 PATH 注入重试(`ark_usage::resolved_shell_path`),仍走 PATH 信任模型;若 PATH 中靠前的位置有恶意同名二进制会被执行。
 
 **CSP 关闭。** `tauri.conf.json` 设 `"csp": null`。webview 只加载本地打包资源、不渲染远程或用户提供的 HTML,实际风险低——但建议开启严格 CSP 做纵深防御。⚠️
 
