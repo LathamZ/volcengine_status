@@ -1,6 +1,6 @@
 [package]
 name = "volcengine_status"
-version = "0.1.0"
+version = "1.0.0"
 description = "macOS menu bar app for Volcengine Ark plan usage"
 authors = ["LathamZhao"]
 edition = "2021"
