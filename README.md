@@ -6,6 +6,26 @@
 
 面向火山引擎方舟大模型平台开发者的长期开源小工具。v1 实时展示套餐用量(5h / weekly / monthly),带阈值变色进度条、重置倒计时和可配置的菜单栏标题——全部由你现有的 `arkcli` SSO 会话驱动。**无需管理 API Key,应用自身不发起任何网络请求,无遥测。**
 
+## 效果预览
+
+<p align="center">
+  <img src="docs/screenshots/menubar.png" alt="菜单栏标题" width="260"><br>
+  <sub><i>菜单栏标题</i></sub>
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/popover.png" alt="下拉浮层" width="340"><br>
+      <sub><i>下拉浮层</i></sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/settings.png" alt="设置面板" width="340"><br>
+      <sub><i>设置面板</i></sub>
+    </td>
+  </tr>
+</table>
+
 ## 功能
 
 - **菜单栏标题**展示 Agent / Coding 套餐的*剩余*百分比(如 `A 76%  C 99%`),展示哪些套餐、取哪个周期(短周期 / weekly / monthly)均可在设置里切换。
