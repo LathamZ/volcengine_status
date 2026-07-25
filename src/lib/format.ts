@@ -59,3 +59,8 @@ export function planTitle(product: string): string {
     default: return product;
   }
 }
+
+/** ¥X.XX - CNY amount with 2 decimals. */
+export function formatMoney(n: number): string {
+  return `¥${n.toFixed(2)}`;
+}

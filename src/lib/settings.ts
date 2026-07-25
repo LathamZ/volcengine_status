@@ -3,13 +3,14 @@ import type { Settings } from "./types";
 export const DEFAULT_SETTINGS: Settings = {
   refreshIntervalSecs: 300,
   trayPlans: ["agent-plan", "coding-plan"],
-  trayPeriod: "monthly",
+  trayPeriod: "auto",
   thresholdWarn: 70,
   thresholdCritical: 90,
   autostart: false,
 };
 
 export const PERIOD_OPTIONS = [
+  { value: "auto", label: "自动(最接近耗尽)" },
   { value: "short", label: "短周期 (5h / session)" },
   { value: "weekly", label: "周 (weekly)" },
   { value: "monthly", label: "月 (monthly)" },
