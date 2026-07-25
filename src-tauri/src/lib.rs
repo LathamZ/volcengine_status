@@ -20,8 +20,18 @@ async fn fetch_and_emit(app: &tauri::AppHandle, state: &Arc<AppState>) {
     state.set_refreshing(true);
     let usage = ark_usage::fetch().await;
     state.cache_put(usage.clone());
+    // Prime billing on first fetch so the tray title can gate the overlimit
+    // glyph on "has an overage bill this month" from the very first refresh.
+    let billing = match state.cache_get_billing() {
+        Some(b) => b,
+        None => {
+            let b = ark_billing::fetch().await;
+            state.cache_put_billing(b.clone());
+            b
+        }
+    };
     let settings = state.get();
-    tray::refresh_title(app, &usage, &settings);
+    tray::refresh_title(app, &usage, Some(&billing), &settings);
     let _ = app.emit("usage-update", &usage);
     state.set_refreshing(false);
 }
@@ -59,7 +69,8 @@ async fn get_usage(
     let usage = ark_usage::fetch().await;
     state.cache_put(usage.clone());
     let settings = state.get();
-    tray::refresh_title(&app, &usage, &settings);
+    let billing = state.cache_get_billing();
+    tray::refresh_title(&app, &usage, billing.as_ref(), &settings);
     state.set_refreshing(false);
     Ok(usage)
 }
@@ -73,7 +84,8 @@ async fn refresh_usage(
     let usage = ark_usage::fetch().await;
     state.cache_put(usage.clone());
     let settings = state.get();
-    tray::refresh_title(&app, &usage, &settings);
+    let billing = state.cache_get_billing();
+    tray::refresh_title(&app, &usage, billing.as_ref(), &settings);
     let _ = app.emit("usage-update", &usage);
     state.set_refreshing(false);
     Ok(usage)
@@ -123,7 +135,8 @@ fn set_settings(
     }
     state.set(settings.clone());
     if let Some(usage) = state.cache_get() {
-        tray::refresh_title(&app, &usage, &settings);
+        let billing = state.cache_get_billing();
+        tray::refresh_title(&app, &usage, billing.as_ref(), &settings);
     }
     Ok(())
 }

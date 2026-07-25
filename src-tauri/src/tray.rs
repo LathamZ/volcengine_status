@@ -3,6 +3,7 @@
 //! plans/period selected in Settings, pushed from Rust so it updates even while
 //! the popover webview is hidden.
 
+use crate::ark_billing::BillingUsage;
 use crate::ark_usage::{Period, PlanUsage};
 use crate::state::{period_label_for, Settings, PERIOD_AUTO};
 use tauri::{
@@ -167,10 +168,17 @@ fn position_window_under_tray<R: Runtime>(
 /// Tray title = remaining % then window tag per plan, e.g. "A 0%·W | C 30%·S".
 /// The tag (5h/S/W/M) tells which period the number reflects - in auto mode
 /// each plan picks its closest-to-exhaustion window.
-pub fn compute_title(usage: &PlanUsage, settings: &Settings) -> String {
+pub fn compute_title(
+    usage: &PlanUsage,
+    billing: Option<&BillingUsage>,
+    settings: &Settings,
+) -> String {
     if settings.tray_plans.is_empty() || usage.plans.is_empty() {
         return String::new();
     }
+    // Overage this month (pay-as-you-go bill > 0) gates the warning glyph - a
+    // window rounding to 0% only flags overlimit if there's an actual bill.
+    let has_overage = billing.map(|b| b.total_amount > 0.0).unwrap_or(false);
     let mut parts: Vec<String> = Vec::new();
     for product in &settings.tray_plans {
         let prefix: &str = match product.as_str() {
@@ -187,6 +195,12 @@ pub fn compute_title(usage: &PlanUsage, settings: &Settings) -> String {
             Some(p) => {
                 let tag = window_tag(&p.label);
                 match p.remaining_percent {
+                    // Overlimit: remaining rounds to 0% AND this month has an
+                    // overage bill -> warning glyph stands in for the percent so
+                    // the menu bar flags which plan blew its quota.
+                    // U+26A0 + U+FE0E (text variation): monochrome, matches the
+                    // menu bar's template style (no emoji color).
+                    Some(r) if r < 0.5 && has_overage => format!("\u{26A0}\u{FE0E}·{}", tag),
                     Some(r) => format!("{}%·{}", r.round().max(0.0) as i64, tag),
                     None => format!("-·{}", tag),
                 }
@@ -236,9 +250,14 @@ fn pick_least_remaining(periods: &[Period]) -> Option<&Period> {
 
 /// Push the title to the NSStatusItem. An empty string collapses the status
 /// item to icon-only; `set_title(None)` leaves a residual gap on macOS.
-pub fn refresh_title(app: &AppHandle, usage: &PlanUsage, settings: &Settings) {
+pub fn refresh_title(
+    app: &AppHandle,
+    usage: &PlanUsage,
+    billing: Option<&BillingUsage>,
+    settings: &Settings,
+) {
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let title = compute_title(usage, settings);
+        let title = compute_title(usage, billing, settings);
         let value: Option<String> = if title.is_empty() {
             Some(String::new())
         } else {
@@ -325,7 +344,7 @@ mod tests {
             tray_period: PERIOD_AUTO.into(),
             ..Default::default()
         };
-        assert_eq!(compute_title(&usage, &s), "A 0%·W");
+        assert_eq!(compute_title(&usage, None, &s), "A 0%·W");
     }
 
     #[test]
@@ -340,7 +359,7 @@ mod tests {
             ..Default::default()
         };
         // 100 - 37.2 = 62.8 -> rounds to 63.
-        assert_eq!(compute_title(&usage, &s), "A 63%·M");
+        assert_eq!(compute_title(&usage, None, &s), "A 63%·M");
     }
 
     #[test]
@@ -359,7 +378,7 @@ mod tests {
             tray_period: PERIOD_AUTO.into(),
             ..Default::default()
         };
-        assert_eq!(compute_title(&usage_with(vec![]), &s), "");
+        assert_eq!(compute_title(&usage_with(vec![]), None, &s), "");
 
         let s_empty = Settings {
             tray_plans: vec![],
@@ -367,7 +386,7 @@ mod tests {
             ..Default::default()
         };
         let usage = usage_with(vec![plan("agent-plan", vec![period("5h", Some(10.0))])]);
-        assert_eq!(compute_title(&usage, &s_empty), "");
+        assert_eq!(compute_title(&usage, None, &s_empty), "");
     }
 
     #[test]
@@ -379,7 +398,7 @@ mod tests {
             tray_period: PERIOD_MONTHLY.into(),
             ..Default::default()
         };
-        assert_eq!(compute_title(&usage, &s), "A -");
+        assert_eq!(compute_title(&usage, None, &s), "A -");
     }
 
     #[test]
@@ -394,6 +413,59 @@ mod tests {
             ..Default::default()
         };
         // agent weekly 20% remaining, coding session 60% remaining.
-        assert_eq!(compute_title(&usage, &s), "A 20%·W | C 60%·S");
+        assert_eq!(compute_title(&usage, None, &s), "A 20%·W | C 60%·S");
+    }
+
+    fn billing(amount: f64) -> BillingUsage {
+        BillingUsage {
+            bill_period: "2026-07".into(),
+            total_amount: amount,
+            total_records: 0,
+            by_model: vec![],
+            truncated: false,
+            fetched_at: "2026-07-19T00:00:00Z".into(),
+            auth_expired: false,
+            not_installed: false,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn overlimit_with_bill_shows_warning_glyph() {
+        // weekly 100% used -> remaining 0, AND a pay-as-you-go bill exists ->
+        // warning glyph instead of percent.
+        let usage = usage_with(vec![plan(
+            "agent-plan",
+            vec![
+                period("5h", Some(50.0)),
+                period("weekly", Some(100.0)),
+                period("monthly", Some(37.0)),
+            ],
+        )]);
+        let s = Settings {
+            tray_plans: vec!["agent-plan".into()],
+            tray_period: PERIOD_AUTO.into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            compute_title(&usage, Some(&billing(4.64)), &s),
+            "A \u{26A0}\u{FE0E}·W"
+        );
+    }
+
+    #[test]
+    fn overlimit_without_bill_shows_percent() {
+        // remaining 0 but no overage bill -> still 0%, no warning glyph.
+        let usage = usage_with(vec![plan(
+            "agent-plan",
+            vec![period("weekly", Some(100.0))],
+        )]);
+        let s = Settings {
+            tray_plans: vec!["agent-plan".into()],
+            tray_period: PERIOD_AUTO.into(),
+            ..Default::default()
+        };
+        assert_eq!(compute_title(&usage, Some(&billing(0.0)), &s), "A 0%·W");
+        assert_eq!(compute_title(&usage, None, &s), "A 0%·W");
     }
 }
