@@ -164,9 +164,9 @@ fn position_window_under_tray<R: Runtime>(
     Ok(())
 }
 
-/// Tray title = remaining % for each selected plan's chosen window, e.g.
-/// "A W 0%  C S 30%". The window tag (5h/S/W/M) tells which period the number
-/// reflects - in auto mode each plan picks its closest-to-exhaustion window.
+/// Tray title = remaining % then window tag per plan, e.g. "A 0%·W | C 30%·S".
+/// The tag (5h/S/W/M) tells which period the number reflects - in auto mode
+/// each plan picks its closest-to-exhaustion window.
 pub fn compute_title(usage: &PlanUsage, settings: &Settings) -> String {
     if settings.tray_plans.is_empty() || usage.plans.is_empty() {
         return String::new();
@@ -187,15 +187,15 @@ pub fn compute_title(usage: &PlanUsage, settings: &Settings) -> String {
             Some(p) => {
                 let tag = window_tag(&p.label);
                 match p.remaining_percent {
-                    Some(r) => format!("{} {}%", tag, r.round().max(0.0) as i64),
-                    None => format!("{} -", tag),
+                    Some(r) => format!("{}%·{}", r.round().max(0.0) as i64, tag),
+                    None => format!("-·{}", tag),
                 }
             }
             None => "-".to_string(),
         };
         parts.push(format!("{} {}", prefix, text));
     }
-    parts.join("  ")
+    parts.join(" | ")
 }
 
 /// Pick the period to surface for a plan. Auto = the closest-to-exhaustion
@@ -325,7 +325,7 @@ mod tests {
             tray_period: PERIOD_AUTO.into(),
             ..Default::default()
         };
-        assert_eq!(compute_title(&usage, &s), "A W 0%");
+        assert_eq!(compute_title(&usage, &s), "A 0%·W");
     }
 
     #[test]
@@ -340,7 +340,7 @@ mod tests {
             ..Default::default()
         };
         // 100 - 37.2 = 62.8 -> rounds to 63.
-        assert_eq!(compute_title(&usage, &s), "A M 63%");
+        assert_eq!(compute_title(&usage, &s), "A 63%·M");
     }
 
     #[test]
@@ -394,6 +394,6 @@ mod tests {
             ..Default::default()
         };
         // agent weekly 20% remaining, coding session 60% remaining.
-        assert_eq!(compute_title(&usage, &s), "A W 20%  C S 60%");
+        assert_eq!(compute_title(&usage, &s), "A 20%·W | C 60%·S");
     }
 }
