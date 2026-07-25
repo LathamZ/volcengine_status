@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { PlanUsage, Settings } from "./lib/types";
+import type { BillingUsage, PlanUsage, Settings } from "./lib/types";
 import { DEFAULT_SETTINGS } from "./lib/settings";
 import { invoke, isTauri, listen } from "./lib/runtime";
 import { HeaderBar } from "./components/HeaderBar";
+import { BillingCard } from "./components/BillingCard";
 import { PlanCard } from "./components/PlanCard";
 import { AuthBanner } from "./components/AuthBanner";
 import { InstallBanner } from "./components/InstallBanner";
@@ -10,6 +11,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 
 export default function App() {
   const [usage, setUsage] = useState<PlanUsage | null>(null);
+  const [billing, setBilling] = useState<BillingUsage | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [refreshing, setRefreshing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -25,12 +27,14 @@ export default function App() {
     const unlisteners: Array<() => void> = [];
     (async () => {
       try {
-        const [u, s] = await Promise.all([
+        const [u, s, b] = await Promise.all([
           invoke<PlanUsage>("get_usage"),
           invoke<Settings>("get_settings"),
+          invoke<BillingUsage>("get_billing"),
         ]);
         setUsage(u);
         setSettings(s);
+        setBilling(b);
       } catch (e) {
         console.error("init failed", e);
       }
@@ -39,6 +43,9 @@ export default function App() {
           setUsage(p);
           setRefreshing(false);
         }),
+      );
+      unlisteners.push(
+        await listen<BillingUsage>("billing-update", (b) => setBilling(b)),
       );
       unlisteners.push(
         await listen<string>("tray-action", (a) => {
@@ -65,7 +72,12 @@ export default function App() {
     refreshTick.current = t;
     setRefreshing(true);
     try {
-      await invoke<PlanUsage>("refresh_usage");
+      // Plan and billing refresh independently - a slow billing fetch must
+      // not block the plan update (each emits its own event).
+      await Promise.all([
+        invoke<PlanUsage>("refresh_usage"),
+        invoke<BillingUsage>("refresh_billing"),
+      ]);
     } catch (e) {
       console.error(e);
       setRefreshing(false);
@@ -159,7 +171,7 @@ export default function App() {
       ro.disconnect();
       unlisten();
     };
-  }, [usage, settingsOpen]);
+  }, [usage, billing, settingsOpen]);
 
   const saveSettings = (s: Settings) => {
     setSettings(s);
@@ -209,6 +221,7 @@ export default function App() {
         {usage && usage.plans.length === 0 && !notInstalled && !authExpired && !hasError && (
           <div className="empty">没有订阅的套餐</div>
         )}
+        {usage && <BillingCard billing={billing} />}
         <div className="footer">
           <span>{usage ? `${remainMin} 分钟后刷新` : "—"}</span>
           <span className="footer-hint">Ctrl+⌘+V 唤出</span>

@@ -33,6 +33,27 @@ export interface PlanUsage {
   error?: string;
 }
 
+export interface ModelUsage {
+  model: string;
+  amount: number;
+  tokens?: number;
+  records: number;
+}
+
+// Mirrors src-tauri/src/ark_billing.rs (camelCase). Monthly pay-as-you-go
+// (beyond-plan) billing rolled up per model.
+export interface BillingUsage {
+  billPeriod: string;
+  totalAmount: number;
+  totalRecords: number;
+  byModel: ModelUsage[];
+  truncated: boolean;
+  fetchedAt: string;
+  authExpired: boolean;
+  notInstalled: boolean;
+  error?: string;
+}
+
 export interface Settings {
   refreshIntervalSecs: number;
   trayPlans: string[];

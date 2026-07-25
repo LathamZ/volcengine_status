@@ -33,6 +33,7 @@ src-tauri/src/
   lib.rs        初始化、Accessory 策略、全局快捷键、刷新循环、invoke 命令
   tray.rs       托盘图标+菜单、浮层定位(tray.rect)、托盘标题计算
   ark_usage.rs  spawn arkcli → 解析 → 归一化(Plan/Period,-1 哨兵,Coding 仅 percent)
+  ark_billing.rs spawn arkcli billing list --billing-mode 2 -> 聚合本月按量计费(超额)消费,按模型分组
   state.rs      缓存快照 + 持久化设置(JSON 在应用配置目录)
 docs/技术方案.md            设计 + 选型对比
 ```
@@ -51,7 +52,7 @@ docs/技术方案.md            设计 + 选型对比
 
 5. **`reset_at` 是 ISO 8601 字符串**(如 `"2026-07-06T00:00:00+08:00"`,带时区偏移),不是 epoch 毫秒。`ark_usage::parse_reset_at` 用 `parse_from_rfc3339` 解析成 epoch 毫秒,失败落 `None`。coding-plan 的 item 还带 `updated_at`(epoch **秒**,整型,目前未用)。
 
-6. **托盘标题在 Rust 侧计算**(`tray::compute_title`),不是前端推送——这样浮层隐藏时标题也会更新。不要加前端 `update_tray_title` 调用路径。标题展示*剩余*%(100 − 已用),按 `Settings` 选定的套餐/周期。
+6. **托盘标题在 Rust 侧计算**(`tray::compute_title`),不是前端推送——这样浮层隐藏时标题也会更新。不要加前端 `update_tray_title` 调用路径。标题展示*剩余*%(100 − 已用),按 `Settings` 选定的套餐/周期。 `auto` 档每套餐自动选 `remaining_percent` 最低(最接近耗尽)窗口;标题带窗口标识 `5h`/`S`/`W`/`M`。
 
 7. **objc2-free 构建。** 用 Tauri 内建 API(`set_always_on_top`、`set_visible_on_all_workspaces`、`tray.rect()`、`set_title`、`set_activation_policy(Accessory)`)。不要无故加 `objc2`/`objc2-app-kit` 依赖;若浮层 z-order 真需要 `NSPopUpMenuWindowLevel`,刻意引入并写明原因(Tokcat 的 `tray.rs` 可参考)。
 
@@ -75,6 +76,7 @@ docs/技术方案.md            设计 + 选型对比
 - `reset_at` 对所有周期都是 **ISO 8601 字符串**(带 `+08:00` 偏移,如 `"2026-07-06T00:00:00+08:00"`),arkcli 已归一掉后端秒/毫秒差异。`ark_usage::parse_reset_at` 用 `parse_from_rfc3339` 解析成 epoch 毫秒,失败落 `None`。
 - 认证失效检测是**启发式**(非零退出 / stderr 关键词 `expired|unauthorized|401|login`)。若能抓到真实过期 payload,精修 `UsageError::is_auth_expired`。
 - 未安装检测:`Command::new("arkcli")` → `io::ErrorKind::NotFound` → `not_installed=true`。
+- **本月超额消费**:`arkcli billing list --start <YYYY-MM> --billing-mode 2 --interval month --limit 50`(已接,见 `ark_billing.rs`):本月按量计费(套餐外超额)消费,按 `ConfigName` 聚合,`tokens` 仅在 `Unit=="千tokens"` 时累加。月级数据,不进 5min 后台 loop(启动+手动刷新),不进托盘标题。spawn 走共享 `ark_usage::run_arkcli`。
 - 可选进阶数据源(路线图,尚未接):`arkcli usage plan-details --start YYYY-MM-DD`、`arkcli usage stats --mine`。
 
 ## 约定

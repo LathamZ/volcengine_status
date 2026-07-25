@@ -1,10 +1,12 @@
 //! App wiring: tray + popover, global shortcut, refresh loop, and the
 //! invoke-handler commands the frontend calls.
 
+mod ark_billing;
 mod ark_usage;
 mod state;
 mod tray;
 
+use ark_billing::BillingUsage;
 use ark_usage::PlanUsage;
 use state::{AppState, Settings};
 use std::sync::Arc;
@@ -75,6 +77,31 @@ async fn refresh_usage(
     let _ = app.emit("usage-update", &usage);
     state.set_refreshing(false);
     Ok(usage)
+}
+
+/// Cached billing snapshot; fetches on first call (cache miss). Never a Tauri
+/// `Err` - failures land in `BillingUsage`'s three fields. Billing isn't in
+/// the 5min refresh loop (monthly data); it refreshes on app open + manual.
+#[tauri::command]
+async fn get_billing(state: tauri::State<'_, Arc<AppState>>) -> Result<BillingUsage, String> {
+    if let Some(cached) = state.cache_get_billing() {
+        return Ok(cached);
+    }
+    let billing = ark_billing::fetch().await;
+    state.cache_put_billing(billing.clone());
+    Ok(billing)
+}
+
+/// Force a billing refresh and broadcast `billing-update`.
+#[tauri::command]
+async fn refresh_billing(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<BillingUsage, String> {
+    let billing = ark_billing::fetch().await;
+    state.cache_put_billing(billing.clone());
+    let _ = app.emit("billing-update", &billing);
+    Ok(billing)
 }
 
 #[tauri::command]
@@ -219,6 +246,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_usage,
             refresh_usage,
+            get_billing,
+            refresh_billing,
             get_settings,
             set_settings,
             run_arkcli_login,

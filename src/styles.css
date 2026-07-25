@@ -345,6 +345,68 @@ body {
   opacity: 0.3;
 }
 
+/* ---- billing card ---- */
+.billing-loading,
+.billing-empty {
+  padding: 8px 2px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.billing-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 9px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.billing-amount {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-models {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.billing-model {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.billing-model-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.billing-model-meta {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-model-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
 /* ---- footer ---- */
 .footer {
   display: flex;

@@ -4,6 +4,10 @@
 //! its JSON, and normalizes both products (agent-plan / coding-plan) into a
 //! single shape the frontend can render directly. Handles the `-1` sentinel,
 //! Coding Plan's percent-only periods, and auth-expired detection.
+//!
+//! `run_arkcli` (plus the PATH fallback and `UsageError`) is shared with
+//! `ark_billing` so every arkcli spawn goes through one trusted path - no
+//! second copy of the GUI-PATH workaround or auth-expired sniffing.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -148,8 +152,10 @@ pub async fn fetch() -> PlanUsage {
     }
 }
 
+/// Errors from an arkcli spawn. Shared by `usage plan` and `billing list`;
+/// `is_auth_expired` and `NotFound` drive the same three frontend banners.
 #[derive(Debug)]
-enum UsageError {
+pub enum UsageError {
     Spawn(String),
     /// Non-zero exit code; stderr retained for auth-expired sniffing.
     Failed {
@@ -161,7 +167,7 @@ enum UsageError {
 }
 
 impl UsageError {
-    fn is_auth_expired(&self) -> bool {
+    pub fn is_auth_expired(&self) -> bool {
         let text = match self {
             UsageError::Failed { stderr, stdout } => {
                 format!("{} {}", stderr, stdout).to_lowercase()
@@ -169,9 +175,9 @@ impl UsageError {
             UsageError::Spawn(msg) => msg.to_lowercase(),
             _ => return false,
         };
-        // Heuristic — refine once a real expired-session payload is captured.
-        // arkcli prints something like "expired" / "login" / "401" when the SSO
-        // session (48h validity) has lapsed.
+        // Heuristic - refine once a real expired-session payload is captured.
+        // The SSO refresh_token lapses after 48h (absolute, not sliding - see
+        // AGENTS.md); arkcli then prints "expired" / "login" / "401" on stderr.
         text.contains("expired")
             || text.contains("unauthorized")
             || text.contains("401")
@@ -200,14 +206,16 @@ impl std::fmt::Display for UsageError {
     }
 }
 
-async fn run_and_parse() -> Result<(Viewer, Vec<Plan>), UsageError> {
-    // Fast path: resolve arkcli via the process PATH. Works when the app is
-    // launched from a shell (e.g. `tauri dev`). GUI launches inherit a
-    // minimal launchd PATH that omits homebrew/nvm/volta dirs, so on
-    // NotFound we retry with the user's login-shell PATH.
-    match spawn_and_parse(None).await {
+/// Spawn `arkcli <args..>` and return its stdout. PATH is resolved via the
+/// process env first, falling back to the user's login+interactive shell PATH
+/// on `NotFound` - GUI launches inherit a minimal launchd PATH that omits
+/// homebrew/nvm/volta dirs, so an nvm-installed arkcli is invisible until we
+/// inject the shell's PATH (cached after first probe). Shared by every arkcli
+/// caller so the workaround lives in one place.
+pub async fn run_arkcli(args: &[&str]) -> Result<String, UsageError> {
+    match spawn_arkcli(args, None).await {
         Err(UsageError::NotFound) => {
-            match spawn_and_parse(resolved_shell_path().as_deref()).await {
+            match spawn_arkcli(args, resolved_shell_path().as_deref()).await {
                 Err(UsageError::NotFound) => Err(UsageError::NotFound),
                 other => other,
             }
@@ -216,12 +224,9 @@ async fn run_and_parse() -> Result<(Viewer, Vec<Plan>), UsageError> {
     }
 }
 
-/// Spawn `arkcli usage plan` and parse the JSON. `path_env`, when set,
-/// overrides the child PATH so a GUI-launched process (whose PATH lacks
-/// homebrew/nvm) can still resolve arkcli to its real location.
-async fn spawn_and_parse(path_env: Option<&str>) -> Result<(Viewer, Vec<Plan>), UsageError> {
+async fn spawn_arkcli(args: &[&str], path_env: Option<&str>) -> Result<String, UsageError> {
     let mut cmd = tokio::process::Command::new("arkcli");
-    cmd.args(["usage", "plan"])
+    cmd.args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     if let Some(p) = path_env {
@@ -232,14 +237,16 @@ async fn spawn_and_parse(path_env: Option<&str>) -> Result<(Viewer, Vec<Plan>), 
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(UsageError::NotFound),
         Err(e) => return Err(UsageError::Spawn(e.to_string())),
     };
-
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         return Err(UsageError::Failed { stderr, stdout });
     }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+async fn run_and_parse() -> Result<(Viewer, Vec<Plan>), UsageError> {
+    let stdout = run_arkcli(&["usage", "plan"]).await?;
     let root: RawRoot = serde_json::from_str(&stdout).map_err(|e| {
         UsageError::Decode(format!(
             "{} (开头: {:?})",
@@ -274,21 +281,21 @@ async fn spawn_and_parse(path_env: Option<&str>) -> Result<(Viewer, Vec<Plan>), 
 }
 
 /// Marker wrapping the captured PATH so `~/.zshrc` echo noise can't corrupt it
-/// (interactive shells may print to stdout during init). Alphanumeric only →
+/// (interactive shells may print to stdout during init). Alphanumeric only ->
 /// safe inside shell single-quotes.
-const PATH_MARK: &str = "VPATHMARK7c3f";
+pub const PATH_MARK: &str = "VPATHMARK7c3f";
 
 static SHELL_PATH: OnceLock<Option<String>> = OnceLock::new();
 
 /// The user's login+interactive shell PATH. GUI apps inherit a minimal launchd
 /// PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) that omits homebrew/nvm/volta dirs,
 /// so `arkcli` installed via `npm install -g` is invisible to the app. We ask
-/// the user's own shell — login *and* interactive — for its PATH: `-l`
+/// the user's own shell - login *and* interactive - for its PATH: `-l`
 /// sources `~/.zprofile` (homebrew shellenv), `-i` sources `~/.zshrc` (where
 /// nvm/volta/asdf init lives). Cached for the process lifetime; fails closed
-/// to `None` (→ surfaces as `not_installed`). One-time blocking call on first
+/// to `None` (-> surfaces as `not_installed`). One-time blocking call on first
 /// NotFound; subsequent fetches hit the cache.
-fn resolved_shell_path() -> Option<String> {
+pub fn resolved_shell_path() -> Option<String> {
     SHELL_PATH
         .get_or_init(|| {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
@@ -310,15 +317,15 @@ fn resolved_shell_path() -> Option<String> {
 
 /// Slice `s` between the first `start` and the following `end`, tolerating
 /// noise before `start`. Returns `None` if either marker is absent.
-fn extract_between_markers<'a>(s: &'a str, start: &str, end: &str) -> Option<&'a str> {
+pub fn extract_between_markers<'a>(s: &'a str, start: &str, end: &str) -> Option<&'a str> {
     let s_pos = s.find(start)?;
     let after = &s[s_pos + start.len()..];
     let e_pos = after.find(end)?;
     Some(&after[..e_pos])
 }
 
-/// Parse arkcli's `reset_at` — an RFC 3339 / ISO 8601 string with a timezone
-/// offset (e.g. `"2026-07-06T00:00:00+08:00"`) — to epoch milliseconds. Returns
+/// Parse arkcli's `reset_at` - an RFC 3339 / ISO 8601 string with a timezone
+/// offset (e.g. `"2026-07-06T00:00:00+08:00"`) - to epoch milliseconds. Returns
 /// `None` on parse failure (treated as "no reset info").
 fn parse_reset_at(s: &str) -> Option<i64> {
     DateTime::parse_from_rfc3339(s)
@@ -461,9 +468,9 @@ mod tests {
         );
         let p = extract_between_markers(&raw, PATH_MARK, PATH_MARK).unwrap();
         assert_eq!(p, "/usr/bin:/bin:/opt/homebrew/bin");
-        // Missing markers → None.
+        // Missing markers -> None.
         assert!(extract_between_markers("no markers here", PATH_MARK, PATH_MARK).is_none());
-        // Empty between markers → Some("").
+        // Empty between markers -> Some("").
         let empty = format!("{}{}", PATH_MARK, PATH_MARK);
         assert_eq!(
             extract_between_markers(&empty, PATH_MARK, PATH_MARK),

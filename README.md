@@ -1,10 +1,10 @@
 # Volcengine Status
 
-> 原生 macOS 菜单栏应用,直接读取本地 `arkcli` SSO 会话,展示火山引擎方舟(Ark)**Agent Plan** 与 **Coding Plan** 的用量。
+> 原生 macOS 菜单栏应用,直接读取本地 `arkcli` SSO 会话,展示火山引擎方舟(Ark)**Agent Plan** 与 **Coding Plan** 的用量,以及本月套餐外的超额(按量计费)消费。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-面向火山引擎方舟大模型平台开发者的长期开源小工具。v1 实时展示套餐用量(5h / weekly / monthly),带阈值变色进度条、重置倒计时和可配置的菜单栏标题——全部由你现有的 `arkcli` SSO 会话驱动。**无需管理 API Key,应用自身不发起任何网络请求,无遥测。**
+面向火山引擎方舟大模型平台开发者的长期开源小工具。实时展示套餐用量(5h / weekly / monthly),带阈值变色进度条、重置倒计时、可配置的菜单栏标题(自动档盯最接近耗尽的窗口),以及本月超额(按量计费)消费明细--全部由你现有的 `arkcli` SSO 会话驱动。**无需管理 API Key,应用自身不发起任何网络请求,无遥测。**
 
 ## 效果预览
 
@@ -28,10 +28,11 @@
 
 ## 功能
 
-- **菜单栏标题**展示 Agent / Coding 套餐的*剩余*百分比(如 `A 76%  C 99%`),展示哪些套餐、取哪个周期(短周期 / weekly / monthly)均可在设置里切换。
+- **菜单栏标题**展示 Agent / Coding 套餐的*剩余*百分比(如 `A W 0%  C S 30%`),标签 `5h`/`S`/`W`/`M` 标明取的是哪个窗口。可选「自动」档:每个套餐自动盯最接近耗尽的那个窗口(任一窗口满即停服)。展示哪些套餐、取哪个周期(自动 / 短周期 / weekly / monthly)均可在设置里切换。
 - **浮层**展示各周期进度条:
-  - Agent Plan — 5h / weekly / monthly,带 `used / total`。
-  - Coding Plan — session / weekly / monthly(仅百分比)。
+  - Agent Plan - 5h / weekly / monthly,带 `used / total`。
+  - Coding Plan - session / weekly / monthly(仅百分比)。
+  - **本月超额消费** - 套餐外按量计费(pay-as-you-go)的月度汇总,按模型分组(金额 + token)。
 - **阈值变色**(绿 / 琥珀 / 红),阈值可配。
 - **实时重置倒计时**(`3h 20m 后`),每 30 秒刷新。
 - **自动刷新**(默认 5 分钟,可配)+ 手动刷新(`⌘R`)。
@@ -110,14 +111,14 @@ npm run tauri:build     # 产出 src-tauri/target/release/bundle/{macos,*.dmg}
 |---|---|---|---|
 | `refreshIntervalSecs` | number | 300 | 下限 30 秒 |
 | `trayPlans` | string[] | `["agent-plan","coding-plan"]` | 托盘展示的套餐(子集/顺序) |
-| `trayPeriod` | `"short"`/`"weekly"`/`"monthly"` | `"monthly"` | `short` = 5h(Agent)/ session(Coding) |
+| `trayPeriod` | `"auto"`/`"short"`/`"weekly"`/`"monthly"` | `"auto"` | `auto` = 自动盯最接近耗尽的窗口; `short` = 5h(Agent)/ session(Coding) |
 | `thresholdWarn` | number | 70 | 百分比,达到变琥珀 |
 | `thresholdCritical` | number | 90 | 百分比,达到变红 |
 | `autostart` | boolean | false | 开机自启(LaunchAgent) |
 
 ## 安全性
 
-开源且体积小,易于审计(约 940 行 Rust + 1140 行 TS/CSS)。威胁模型与属性如下:
+开源且体积小,易于审计(约 1200 行 Rust + 1300 行 TS/CSS)。威胁模型与属性如下:
 
 **凭证从不触碰。** 应用不读取、不存储、不传输 `arkcli` 的 SSO token,只 spawn `arkcli usage plan`,由 arkcli 用自己的会话。应用内无需配置任何 API Key。✅
 
@@ -166,7 +167,8 @@ src/                        React 浮层
 src-tauri/src/
   lib.rs        初始化、Accessory 策略、全局快捷键、刷新循环、命令
   tray.rs       托盘图标+菜单、浮层定位(tray.rect)、标题计算
-  ark_usage.rs  spawn arkcli、解析、归一化(-1 哨兵、Coding 仅 percent)
+  ark_usage.rs  spawn arkcli(共享 run_arkcli)、解析、归一化(-1 哨兵、Coding 仅 percent)
+  ark_billing.rs spawn arkcli billing list --billing-mode 2 -> 聚合本月按量计费(超额)消费,按模型分组
   state.rs      缓存快照 + 持久化设置(JSON 在应用配置目录)
 docs/技术方案.md            设计 + 选型对比
 ```
@@ -180,7 +182,9 @@ docs/技术方案.md            设计 + 选型对比
 - `-1` 是哨兵值 → 渲染为 `—`。
 - Coding Plan 周期只有 `percent`(无 `used`/`total`)。
 - `reset_at` 是 epoch 毫秒(arkcli 已把 Coding 的秒 ×1000 归一)。
-- 非零退出 / 非法 JSON / 认证失效关键词 → 认证条;arkcli 不在 PATH → 安装条。
+- 非零退出 / 非法 JSON / 认证失效关键词 -> 认证条;arkcli 不在 PATH -> 安装条。
+
+**超额消费**走 `arkcli billing list --billing-mode 2 --interval month`(按量计费 = 套餐外超额)。输出 PascalCase,`PayableAmount`/`Count` 为字符串;按 `ConfigName` 聚合,`tokens` 仅在 `Unit=="千tokens"` 时累加(跨单位不混算)。月级数据,不进 5min 后台 loop(启动 + 手动刷新),不进托盘标题。spawn 走共享 `ark_usage::run_arkcli`。
 
 ## 路线图
 

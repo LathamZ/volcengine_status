@@ -4,6 +4,7 @@
 //! restarts. The cache holds the last fetch so the popover can render instantly
 //! on open instead of waiting for a subprocess round-trip.
 
+use crate::ark_billing::BillingUsage;
 use crate::ark_usage::PlanUsage;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -18,6 +19,9 @@ use tauri::{AppHandle, Manager};
 pub const PERIOD_SHORT: &str = "short";
 pub const PERIOD_WEEKLY: &str = "weekly";
 pub const PERIOD_MONTHLY: &str = "monthly";
+/// Auto: each plan surfaces whichever window is closest to exhaustion (lowest
+/// remaining%). Resolved in `tray::compute_title`, not `period_label_for`.
+pub const PERIOD_AUTO: &str = "auto";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -38,7 +42,7 @@ impl Default for Settings {
         Self {
             refresh_interval_secs: 300,
             tray_plans: vec!["agent-plan".into(), "coding-plan".into()],
-            tray_period: PERIOD_MONTHLY.into(),
+            tray_period: PERIOD_AUTO.into(),
             threshold_warn: 70.0,
             threshold_critical: 90.0,
             autostart: false,
@@ -48,6 +52,9 @@ impl Default for Settings {
 
 pub struct AppState {
     cache: RwLock<Option<CacheEntry>>,
+    /// Last billing fetch - separate from `cache` since billing has no
+    /// tray-title coupling and refreshes on demand (not in the 5min loop).
+    billing_cache: RwLock<Option<BillingUsage>>,
     settings: RwLock<Settings>,
     settings_path: RwLock<Option<PathBuf>>,
     pub refreshing: AtomicBool,
@@ -64,6 +71,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             cache: RwLock::new(None),
+            billing_cache: RwLock::new(None),
             settings: RwLock::new(Settings::default()),
             settings_path: RwLock::new(None),
             refreshing: AtomicBool::new(false),
@@ -119,6 +127,16 @@ impl AppState {
         };
         *self.cache.write() = Some(entry);
         let _ = data;
+    }
+
+    /// Billing snapshot - no `fetched_at` consumer (plan usage's `CacheEntry`
+    /// wraps one for tray staleness; billing doesn't touch the tray).
+    pub fn cache_get_billing(&self) -> Option<BillingUsage> {
+        self.billing_cache.read().clone()
+    }
+
+    pub fn cache_put_billing(&self, data: BillingUsage) {
+        *self.billing_cache.write() = Some(data);
     }
 
     pub fn set_refreshing(&self, v: bool) {
