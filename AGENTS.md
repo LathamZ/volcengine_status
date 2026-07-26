@@ -115,6 +115,18 @@ docs/技术方案.md            设计 + 选型对比
 - `Cargo.lock` 已提交(可复现构建),不要 gitignore。
 - 代码签名/公证**未配置**(路线图)。不要零散加签名配置;要做得作为一个整体改动,连同 `tauri-plugin-updater` 一起。
 
+## 发布流程
+
+用户确认效果 OK("效果 OK"/"继续"/"没问题"等)后,直接走完整发布流程,无需再问:
+
+1. commit 改动 + push main:`git add -A && git commit -m "<type>: <desc>" -m "Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin main`
+2. 版本号看 GitHub 当前最新 +0.0.1(如 v1.0.4 -> v1.0.5),bump 3 文件:`src-tauri/Cargo.toml` `version`、`package.json` `"version"`、`src-tauri/tauri.conf.json` `"version"`
+3. `npm run tauri:build`(产出 `src-tauri/target/release/bundle/dmg/Volcengine Status_x.y.z_aarch64.dmg` + 更新 `Cargo.lock`)
+4. commit bump + push:`git add -A && git commit -m "chore(release): bump version to x.y.z" -m "Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin main`
+5. `gh release create vx.y.z "src-tauri/target/release/bundle/dmg/Volcengine Status_x.y.z_aarch64.dmg" --target main --title "vx.y.z" --notes "..."`(中文 notes + 未签名提示)
+
+分类器若拒 push main(没明确授权时),提示用户手动 `! git ...` 或等;用户已明确授权时直接走。`.claude/` 已 gitignore(plan 文件不入库)。
+
 ## v1 范围外(未受命不要加)
 
 趋势图 + 快照缓存、按模型 `plan-details`、动态着色托盘图标、自动更新 + 签名/公证 `.dmg`、Linux/Windows 配置。见 README 路线图。
