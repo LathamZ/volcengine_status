@@ -407,6 +407,19 @@ body {
   font-weight: 500;
 }
 
+.billing-more {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  padding: 5px 0 0;
+  cursor: pointer;
+  text-align: left;
+}
+.billing-more:hover {
+  filter: brightness(1.1);
+}
+
 /* ---- footer ---- */
 .footer {
   display: flex;

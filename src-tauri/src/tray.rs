@@ -238,14 +238,27 @@ fn window_tag(label: &str) -> &'static str {
     }
 }
 
-/// The period closest to exhausting its quota: lowest `remaining_percent`
-/// (i.e. highest used%). `None` if no period carries percent data.
+/// The period closest to exhausting its quota: lowest remaining amount, where
+/// "remaining" prefers actual tokens left (total - used) and falls back to
+/// remaining_percent when the period lacks absolute numbers (Coding Plan).
+/// `None` if no period carries either.
 fn pick_least_remaining(periods: &[Period]) -> Option<&Period> {
     periods
         .iter()
-        .filter_map(|p| p.remaining_percent.map(|r| (p, r)))
+        .filter_map(remaining_amount)
         .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(p, _)| p)
+}
+
+/// Remaining amount to rank windows by: prefer actual tokens left (total -
+/// used) so a 5h window with 2000 tokens left ranks below a monthly window
+/// with 20000 left even if both report 80% used; fall back to remaining_percent
+/// when the period only carries a percent (Coding Plan).
+fn remaining_amount(p: &Period) -> Option<(&Period, f64)> {
+    match (p.used, p.total) {
+        (Some(used), Some(total)) => Some((p, (total - used).max(0.0))),
+        _ => p.remaining_percent.map(|r| (p, r)),
+    }
 }
 
 /// Push the title to the NSStatusItem. An empty string collapses the status
@@ -301,6 +314,20 @@ mod tests {
             label: label.to_string(),
             used: None,
             total: None,
+            percent,
+            remaining_percent: percent.map(|p| (100.0 - p).max(0.0)),
+            reset_at: None,
+            reset_text: None,
+        }
+    }
+
+    /// Like `period` but with absolute used/total so tests can exercise the
+    /// token-based ranking (Agent Plan windows carry both).
+    fn period_full(label: &str, used: f64, total: f64, percent: Option<f64>) -> Period {
+        Period {
+            label: label.to_string(),
+            used: Some(used),
+            total: Some(total),
             percent,
             remaining_percent: percent.map(|p| (100.0 - p).max(0.0)),
             reset_at: None,
@@ -467,5 +494,24 @@ mod tests {
         };
         assert_eq!(compute_title(&usage, Some(&billing(0.0)), &s), "A 0%·W");
         assert_eq!(compute_title(&usage, None, &s), "A 0%·W");
+    }
+
+    #[test]
+    fn prefers_actual_tokens_over_percent() {
+        // Both windows 80% used (20% remaining), but 5h has fewer tokens left
+        // (2000 vs 20000) so it's the closest to exhaustion under token ranking.
+        let usage = usage_with(vec![plan(
+            "agent-plan",
+            vec![
+                period_full("5h", 8000.0, 10000.0, Some(80.0)),
+                period_full("monthly", 80000.0, 100000.0, Some(80.0)),
+            ],
+        )]);
+        let s = Settings {
+            tray_plans: vec!["agent-plan".into()],
+            tray_period: PERIOD_AUTO.into(),
+            ..Default::default()
+        };
+        assert_eq!(compute_title(&usage, None, &s), "A 20%·5h");
     }
 }
