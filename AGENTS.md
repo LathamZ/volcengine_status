@@ -66,6 +66,10 @@ docs/技术方案.md            设计 + 选型对比
 
 12. **CSP 当前为 `null`**(已知加固项,在 README 路线图里)。开启严格 CSP 可以,但别破坏本地资源 webview——改完 `tauri.conf.json` 的 `security.csp` 要测浮层。
 
+13. **`tray-icon` 是 vendored 的**:`vendor/tray-icon/` = 上游 0.24.1 + PR #365,经 `src-tauri/Cargo.toml` 的 `[patch.crates-io]` 接入,修 macOS 27 上左键被 AppKit 抢去弹菜单、`TrayIconEvent::Click` 一个都不发。**别 `cargo update` 它、别把 `vendor/` 当成废弃目录删掉**;tauri 依赖升到 tray-icon ≥0.25 时**必须**删除 vendor + patch 块(届时构建会报版本冲突,不会静默失效)。背景与 diff 复现见 `vendor/tray-icon/PATCH.md`。
+
+14. **浮层收起有两条路径,别互相打架**:失焦 hide(`lib.rs`)与托盘点击 toggle(`tray.rs`)。点自己的状态栏项会先触发失焦,所以失焦处理里用 `tray::cursor_over_tray()` 把这种情况让给 toggle——否则面板会"能开不能关"。改任何一条前先读这两处的注释。
+
 ## 数据源与解析
 
 `arkcli usage plan` → `{ viewer, items:[{product, edition, tier?, updated_at?, periods:[{label, used?, total?, percent, reset_at(string ISO8601)}]}] }`。`updated_at` 仅 coding-plan 有(epoch 秒)。

@@ -25,6 +25,16 @@ chrono = "0.4"
 log = "0.4"
 env_logger = "0.11"
 
+# tray-icon 0.24.1 + upstream PR tauri-apps/tray-icon#365 (vendored, see
+# vendor/tray-icon/PATCH.md). On macOS 27, AppKit claims the left click for the
+# status item's NSMenu before tray-icon's interception subview sees it, so
+# `TrayIconEvent::Click` never fires and the left-click popover stopped opening.
+# The patch only attaches the menu while it is actually being presented.
+# Drop this block once tauri depends on tray-icon >= 0.25 (i.e. tauri 3.x) -
+# the version conflict fails the build loudly, it does not silently rot.
+[patch.crates-io]
+tray-icon = { path = "../vendor/tray-icon" }
+
 [profile.release]
 panic = "abort"
 codegen-units = 1

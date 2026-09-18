@@ -245,8 +245,16 @@ pub fn run() {
                 // so opening it never trips this blur.
                 if let Some(window) = handle.get_webview_window("main") {
                     let w = window.clone();
+                    let blur_handle = handle.clone();
                     window.on_window_event(move |event| {
                         if let tauri::WindowEvent::Focused(false) = event {
+                            // Clicking our own status item blurs the popover
+                            // before the tray click lands; hiding here would make
+                            // the click re-open it instead of toggling it shut.
+                            // Leave that case to the tray handler.
+                            if tray::cursor_over_tray(&blur_handle) {
+                                return;
+                            }
                             let _ = w.hide();
                         }
                     });

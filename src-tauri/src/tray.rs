@@ -44,6 +44,18 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
+            // Opening the right-click menu with the popover up would leave the
+            // popover stranded behind it: the blur that would normally dismiss
+            // it is suppressed by `cursor_over_tray`. Dismiss it here instead.
+            if let TrayIconEvent::Click {
+                button: MouseButton::Right,
+                button_state: MouseButtonState::Down,
+                ..
+            } = event
+            {
+                hide_popover(tray.app_handle());
+                return;
+            }
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -104,6 +116,36 @@ pub fn hide_popover<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
+}
+
+/// Whether the pointer is currently over the status item.
+///
+/// A click on our *own* status item blurs the popover before the tray click
+/// event is delivered, so the blur handler would hide the window and the click
+/// handler would then see it hidden and re-open it - the popover could be opened
+/// by clicking the icon but never closed. When the pointer is on the status
+/// item the blur is ours, so let the tray handler own the decision.
+///
+/// Both `tray.rect()` and `cursor_position()` are AppKit coordinates scaled to
+/// physical pixels by the same transform, so they compare directly. Anything
+/// unexpected (no tray, no rect, a logical rect) reports `false`, which falls
+/// back to the plain hide-on-blur behavior.
+pub fn cursor_over_tray<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let (Some(tray), Ok(cursor)) = (app.tray_by_id("main-tray"), app.cursor_position()) else {
+        return false;
+    };
+    let Ok(Some(rect)) = tray.rect() else {
+        return false;
+    };
+    let (tauri::Position::Physical(pos), tauri::Size::Physical(size)) = (rect.position, rect.size)
+    else {
+        return false;
+    };
+    let (x, y) = (f64::from(pos.x), f64::from(pos.y));
+    cursor.x >= x
+        && cursor.x <= x + f64::from(size.width)
+        && cursor.y >= y
+        && cursor.y <= y + f64::from(size.height)
 }
 
 fn prepare_popover_window<R: Runtime>(window: &WebviewWindow<R>) {

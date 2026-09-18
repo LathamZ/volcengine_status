@@ -25,3 +25,6 @@ dist-ssr
 
 # Claude Code working files
 .claude/
+
+# Herdr agent reports
+.herdr-reports/
